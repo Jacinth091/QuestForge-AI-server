@@ -5,6 +5,9 @@ import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
 import AuthRoute from "./routes/auth.route.js";
+import BossRoute from "./routes/boss.route.js";
+import RoadmapRoute from "./routes/roadmap.route.js";
+import ScheduleRoute from "./routes/schedule.route.js";
 
 dotenv.config();
 
@@ -26,6 +29,9 @@ app.use(
 );
 
 app.use("/api/auth/", AuthRoute);
+app.use("/api/roadmap/", RoadmapRoute);
+app.use("/api/schedule/", ScheduleRoute);
+app.use("/api/boss/", BossRoute);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
