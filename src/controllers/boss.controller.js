@@ -8,6 +8,18 @@ import { evaluateBossFight } from "../services/ai.service.js";
 export const getBossByQuestId = async (req, res) => {
   try {
     const { questId } = req.params;
+    const userId = req.user.id;
+
+    // ✅ Only allow access if the user has this quest assigned to them
+    const userQuest = await prisma.userQuest.findUnique({
+      where: { userId_questId: { userId, questId } },
+    });
+
+    if (!userQuest) {
+      return res.status(403).json({
+        message: "You don't have access to this quest. Select a path first.",
+      });
+    }
 
     const boss = await prisma.boss.findUnique({
       where: { questId },
@@ -60,19 +72,22 @@ export const startBossFight = async (req, res) => {
       return res.status(404).json({ message: "Quest or boss not found." });
     }
 
-    // Check or create UserQuest record
+    // ✅ Check that this quest belongs to the user (they must have a UserQuest record)
     let userQuest = await prisma.userQuest.findUnique({
       where: { userId_questId: { userId, questId } },
     });
 
     if (!userQuest) {
-      userQuest = await prisma.userQuest.create({
-        data: {
-          userId,
-          questId,
-          status: "IN_PROGRESS",
-          startedAt: new Date(),
-        },
+      return res.status(403).json({
+        message: "You don't have access to this quest. Select a path first.",
+      });
+    }
+
+    // ✅ Quest must be IN_PROGRESS or NOT_STARTED — not LOCKED
+    if (userQuest.status === "LOCKED") {
+      return res.status(403).json({
+        message:
+          "This quest is still locked. Complete the previous quest first.",
       });
     }
 
@@ -150,15 +165,15 @@ export const submitBossFight = async (req, res) => {
       select: { academicLevel: true, academicYear: true },
     });
 
-    // Get UserQuest record
+    // ✅ Get UserQuest record — must exist (user must own this quest)
     let userQuest = await prisma.userQuest.findUnique({
       where: { userId_questId: { userId, questId } },
     });
 
     if (!userQuest) {
-      return res
-        .status(400)
-        .json({ message: "You must start the boss fight first." });
+      return res.status(403).json({
+        message: "You don't have access to this quest. Select a path first.",
+      });
     }
 
     if (userQuest.bossFightPassed) {
@@ -257,16 +272,32 @@ export const getBossFightHistory = async (req, res) => {
 };
 
 // ============================================
-// HELPER: Check and advance stage after quest completion
+// HELPER: Unlock the next quest after beating a boss
+// Weekly loop: beat this week's boss → next week's quest unlocks
 // ============================================
 const checkAndAdvanceStage = async (userId, questId) => {
   try {
+    // Get the completed quest with its stage + ALL quests in the roadmap (ordered)
     const quest = await prisma.quest.findUnique({
       where: { id: questId },
       include: {
         stage: {
           include: {
-            quests: true,
+            roadmap: {
+              include: {
+                stages: {
+                  orderBy: { stageNumber: "asc" },
+                  include: {
+                    quests: {
+                      orderBy: { questNumber: "asc" },
+                    },
+                  },
+                },
+              },
+            },
+            quests: {
+              orderBy: { questNumber: "asc" },
+            },
           },
         },
       },
@@ -274,9 +305,39 @@ const checkAndAdvanceStage = async (userId, questId) => {
 
     if (!quest) return;
 
-    // Check if all quests in this stage are completed
+    // Build a flat ordered list of ALL quests across all stages
+    const allQuests = quest.stage.roadmap.stages.flatMap((s) => s.quests);
+
+    // Find where the current quest is in the full list
+    const currentIndex = allQuests.findIndex((q) => q.id === questId);
+    const nextQuest = allQuests[currentIndex + 1];
+
+    if (!nextQuest) {
+      console.log(`🏆 User ${userId} completed the entire roadmap!`);
+      return;
+    }
+
+    // Unlock the next quest (flip LOCKED → IN_PROGRESS)
+    const nextUserQuest = await prisma.userQuest.findUnique({
+      where: { userId_questId: { userId, questId: nextQuest.id } },
+    });
+
+    if (nextUserQuest && nextUserQuest.status === "LOCKED") {
+      await prisma.userQuest.update({
+        where: { userId_questId: { userId, questId: nextQuest.id } },
+        data: {
+          status: "IN_PROGRESS",
+          startedAt: new Date(),
+        },
+      });
+      console.log(
+        `✅ Unlocked next quest "${nextQuest.title}" for user ${userId}`,
+      );
+    }
+
+    // Also advance currentStage if the completed quest was the last in its stage
     const stageQuestIds = quest.stage.quests.map((q) => q.id);
-    const completedQuests = await prisma.userQuest.count({
+    const completedInStage = await prisma.userQuest.count({
       where: {
         userId,
         questId: { in: stageQuestIds },
@@ -284,14 +345,14 @@ const checkAndAdvanceStage = async (userId, questId) => {
       },
     });
 
-    // If all quests in stage are done, advance to next stage
-    if (completedQuests === stageQuestIds.length) {
+    if (completedInStage === stageQuestIds.length) {
       await prisma.user.update({
         where: { id: userId },
         data: { currentStage: { increment: 1 } },
       });
-
-      console.log(`✅ User ${userId} advanced to next stage!`);
+      console.log(
+        `✅ User ${userId} completed Stage ${quest.stage.stageNumber} — advanced to next stage!`,
+      );
     }
   } catch (error) {
     console.error("Failed to advance stage:", error.message);

@@ -119,6 +119,9 @@ export const selectPathAndGenerate = async (req, res) => {
     });
 
     if (existingRoadmap) {
+      // Assign UserQuest records to this user for the existing roadmap
+      await assignUserQuests(userId, existingRoadmap);
+
       return res.status(200).json({
         message: `Path set to ${normalizedPath}. Roadmap already exists!`,
         roadmap: existingRoadmap,
@@ -130,6 +133,9 @@ export const selectPathAndGenerate = async (req, res) => {
     console.log(`Generating roadmap for path: ${normalizedPath}`);
     const roadmapData = await generateRoadmap(normalizedPath);
     const savedRoadmap = await saveRoadmapToDB(roadmapData, normalizedPath);
+
+    // Assign UserQuest records to this user for the newly generated roadmap
+    await assignUserQuests(userId, savedRoadmap);
 
     return res.status(201).json({
       message: `Path set to ${normalizedPath}. Roadmap generated!`,
@@ -144,6 +150,7 @@ export const selectPathAndGenerate = async (req, res) => {
   }
 };
 
+// ============================================
 // ============================================
 // GET USER'S ROADMAP
 // GET /api/roadmap/my
@@ -201,18 +208,127 @@ export const getMyRoadmap = async (req, res) => {
 };
 
 // ============================================
-// GET ALL ROADMAPS
+// GET USER'S QUESTS (flat list with progress)
+// GET /api/roadmap/my-quests
+// ============================================
+export const getMyQuests = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get all UserQuest records for this user with full quest + boss info
+    const userQuests = await prisma.userQuest.findMany({
+      where: { userId },
+      include: {
+        quest: {
+          include: {
+            boss: {
+              select: {
+                id: true,
+                name: true,
+                hp: true,
+                damage: true,
+                difficulty: true,
+                xpReward: true,
+                loot: true,
+              },
+            },
+            stage: {
+              select: {
+                stageNumber: true,
+                title: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        quest: { week: "asc" },
+      },
+    });
+
+    if (userQuests.length === 0) {
+      return res.status(404).json({
+        message: "No quests found. Please select a path first.",
+      });
+    }
+
+    // Shape the response — flat list, clean and frontend-friendly
+    const quests = userQuests.map((uq) => ({
+      userQuestId: uq.id,
+      questId: uq.quest.id,
+      title: uq.quest.title,
+      description: uq.quest.description,
+      week: uq.quest.week,
+      duration: uq.quest.duration,
+      goal: uq.quest.goal,
+      keyTopics: uq.quest.keyTopics,
+      xpReward: uq.quest.xpReward,
+      badgeReward: uq.quest.badgeReward,
+      // Resources
+      courseLink: uq.quest.courseLink,
+      videoSeriesLink: uq.quest.videoSeriesLink,
+      documentationLink: uq.quest.documentationLink,
+      // Stage info
+      stage: uq.quest.stage,
+      // Boss info (if exists)
+      boss: uq.quest.boss || null,
+      // User's personal progress on this quest
+      progress: {
+        status: uq.status,
+        startedAt: uq.startedAt,
+        completedAt: uq.completedAt,
+        bossFightAttempts: uq.bossFightAttempts,
+        bossFightPassed: uq.bossFightPassed,
+        bossFightScore: uq.bossFightScore,
+        xpEarned: uq.xpEarned,
+      },
+    }));
+
+    return res.status(200).json({
+      total: quests.length,
+      quests,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch quests",
+      error: error.message,
+    });
+  }
+};
+
+// ============================================
+// GET MY ROADMAP (with UserQuest progress attached)
 // GET /api/roadmap
 // ============================================
 export const getAllRoadmaps = async (req, res) => {
   try {
-    const roadmaps = await prisma.roadmap.findMany({
+    const userId = req.user.id;
+
+    // ✅ Only return the roadmap for the user's own path
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { path: true },
+    });
+
+    if (!user?.path || user.path === "NONE") {
+      return res.status(404).json({
+        message: "No roadmap found. Please select a path first.",
+      });
+    }
+
+    const roadmap = await prisma.roadmap.findFirst({
+      where: { path: user.path },
       include: {
         stages: {
+          orderBy: { stageNumber: "asc" },
           include: {
             quests: {
+              orderBy: { questNumber: "asc" },
               include: {
                 boss: true,
+                userQuests: {
+                  where: { userId }, // ✅ attach this user's progress per quest
+                },
               },
             },
           },
@@ -220,10 +336,16 @@ export const getAllRoadmaps = async (req, res) => {
       },
     });
 
-    return res.status(200).json({ roadmaps });
+    if (!roadmap) {
+      return res.status(404).json({
+        message: "No roadmap found for your selected path.",
+      });
+    }
+
+    return res.status(200).json({ roadmap });
   } catch (error) {
     return res.status(500).json({
-      message: "Failed to fetch roadmaps",
+      message: "Failed to fetch roadmap",
       error: error.message,
     });
   }
@@ -327,4 +449,52 @@ const saveRoadmapToDB = async (roadmapData, path) => {
       },
     },
   });
+};
+
+// ============================================
+// SHARED: Assign UserQuest rows for every quest in a roadmap
+// Skips quests that are already assigned (upsert-safe)
+// First quest = IN_PROGRESS, rest = LOCKED
+// ============================================
+const assignUserQuests = async (userId, roadmap) => {
+  // Collect all quests across all stages in order
+  const allQuests = roadmap.stages
+    .sort((a, b) => a.stageNumber - b.stageNumber)
+    .flatMap((stage) =>
+      stage.quests.sort((a, b) => a.questNumber - b.questNumber),
+    );
+
+  if (allQuests.length === 0) return;
+
+  // Check which quests this user already has assigned
+  const existingUserQuests = await prisma.userQuest.findMany({
+    where: {
+      userId,
+      questId: { in: allQuests.map((q) => q.id) },
+    },
+    select: { questId: true },
+  });
+
+  const alreadyAssigned = new Set(existingUserQuests.map((uq) => uq.questId));
+
+  // Only create rows for quests not yet assigned
+  const toCreate = allQuests.filter((q) => !alreadyAssigned.has(q.id));
+
+  if (toCreate.length === 0) return;
+
+  // First quest of the entire roadmap = IN_PROGRESS, all others = LOCKED
+  // But if user already has some quests, keep the first NEW one as NOT_STARTED
+  const isFirstEver = alreadyAssigned.size === 0;
+
+  await prisma.userQuest.createMany({
+    data: toCreate.map((quest, index) => ({
+      userId,
+      questId: quest.id,
+      status: isFirstEver && index === 0 ? "IN_PROGRESS" : "LOCKED",
+      startedAt: isFirstEver && index === 0 ? new Date() : null,
+    })),
+    skipDuplicates: true,
+  });
+
+  console.log(`✅ Assigned ${toCreate.length} quests to user ${userId}`);
 };

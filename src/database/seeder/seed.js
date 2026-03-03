@@ -9,6 +9,28 @@ const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log("--- Starting Seed ---");
+
+  // ============================================
+  // 0. CLEANUP (so seed is re-run safe)
+  // Delete user-specific data first (FK order), keep store items
+  // ============================================
+  console.log("Cleaning up old seed data...");
+  await prisma.aiSession.deleteMany({
+    where: { user: { email: "jacinth@example.com" } },
+  });
+  await prisma.userInventory.deleteMany({
+    where: { user: { email: "jacinth@example.com" } },
+  });
+  await prisma.userQuest.deleteMany({
+    where: { user: { email: "jacinth@example.com" } },
+  });
+  await prisma.schedule.deleteMany({
+    where: { user: { email: "jacinth@example.com" } },
+  });
+  // Delete global roadmap for FRONTEND path (cascades to stages, quests, bosses, questions)
+  await prisma.roadmap.deleteMany({ where: { id: "roadmap-fe-101" } });
+  console.log("✅ Cleanup done");
+
   // ============================================
   // 1. STORE ITEMS
   // ============================================
@@ -112,7 +134,7 @@ async function main() {
     },
   });
 
-  // Schedule
+  // Schedule (safe because we deleted it in cleanup above)
   const schedule = await prisma.schedule.create({
     data: {
       name: "2nd Semester 2025-2026",
@@ -520,6 +542,7 @@ async function main() {
 
   const stage1 = await prisma.stage.create({
     data: {
+      id: "stage-fe-1",
       stageNumber: 1,
       title: "The Foundation",
       description: "Master the structure and styling of the modern web.",
@@ -531,6 +554,7 @@ async function main() {
 
   const stage2 = await prisma.stage.create({
     data: {
+      id: "stage-fe-2",
       stageNumber: 2,
       title: "The Logic Engine",
       description: "Move from static pages to functional applications.",
@@ -542,6 +566,7 @@ async function main() {
 
   const stage3 = await prisma.stage.create({
     data: {
+      id: "stage-fe-3",
       stageNumber: 3,
       title: "The Modern Workflow",
       description: "Learn how professionals actually build software.",
@@ -560,6 +585,7 @@ async function main() {
 
   const quest1 = await prisma.quest.create({
     data: {
+      id: "quest-fe-1",
       questNumber: 1,
       title: "The Architect's Blueprint (HTML5 & CSS3)",
       description: "Master the structure and styling of the modern web.",
@@ -584,6 +610,7 @@ async function main() {
 
   const quest2 = await prisma.quest.create({
     data: {
+      id: "quest-fe-2",
       questNumber: 2,
       title: "The Shape-Shifter (CSS Layouts)",
       description: "Master responsive design and CSS layouts.",
@@ -660,6 +687,40 @@ async function main() {
   });
 
   console.log(`✅ Seeded 4 quests`);
+
+  // ============================================
+  // 5b. USER QUESTS (assign roadmap quests to Jacinth)
+  // ============================================
+  console.log("Seeding user quests...");
+
+  await prisma.userQuest.createMany({
+    data: [
+      {
+        userId: user.id,
+        questId: quest1.id,
+        status: "IN_PROGRESS",
+        startedAt: new Date(),
+      },
+      {
+        userId: user.id,
+        questId: quest2.id,
+        status: "LOCKED",
+      },
+      {
+        userId: user.id,
+        questId: quest3.id,
+        status: "LOCKED",
+      },
+      {
+        userId: user.id,
+        questId: quest4.id,
+        status: "LOCKED",
+      },
+    ],
+    skipDuplicates: true,
+  });
+
+  console.log(`✅ Seeded 4 user quests`);
 
   // ============================================
   // 6. BOSSES
@@ -916,6 +977,7 @@ async function main() {
   console.log(`✅ Roadmap: ${roadmap.title}`);
   console.log(`✅ Stages: 3`);
   console.log(`✅ Quests: 4`);
+  console.log(`✅ User Quests: 4 (assigned to Jacinth)`);
   console.log(`✅ Bosses: 4`);
   console.log(`✅ Boss Questions: 12 (3 per boss)`);
   console.log("--- Seed Completed ✅ ---");
