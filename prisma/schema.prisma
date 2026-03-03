@@ -5,63 +5,349 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+  // url = env("DATABASE_URL")
 }
+// ============================================
+// USER & PROFILE MODELS
+// ============================================
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String?
-
+  id            String        @id @default(uuid())
+  email         String        @unique
+  password      String
+  name          String?
+  // Academic Info
+  academicYear  String?
+  academicLevel String?
   // Chosen Path
-  path      Path?    @default(NONE)
-
-  // Roadmap & Schedule (JSON)
-  roadmap   Json?
-  schedule  Json?
-
-  // Premium
-  isPremium Boolean  @default(false)
-
+  path          Path          @default(NONE)
+  // Progress Tracking
+  currentStage  Int           @default(1)
+  // Premium Status
+  isPremium     Boolean       @default(false)
+  premiumUntil  DateTime?
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  // Relation to UserProfile
-  profile   UserProfile?
+  // Relations
+  profile       UserProfile?
+  userQuests    UserQuest[]
+  schedules     Schedule[]
+  purchases     Purchase[]
+  inventory     UserInventory[]
+  aiSessions    AiSession[]    // ✅ Added
 
-  isActive Boolean @default(false)
+  @@index([path])
+  @@index([isPremium])
 }
 
 model UserProfile {
-  id     String @id @default(uuid())
-
+  id            String   @id @default(uuid())
   // RPG Stats
-  level  Int    @default(1)
-  xp     Int    @default(0)
-  hp     Int    @default(100)
-
-  // Badge
-  badge  Badge  @default(WARRIOR)
-
+  level         Int      @default(1)
+  xp            Int      @default(0)
+  hp            Int      @default(100)
+  maxHp         Int      @default(100)
+  // Badge/Avatar
+  badge         Badge    @default(WARRIOR)
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relation to User
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([xp])
+  @@index([level])
 }
 
-// Enums
+// ============================================
+// ROADMAP & QUEST MODELS
+// ============================================
+
+model Roadmap {
+  id              String   @id @default(uuid())
+  path            Path
+  title           String
+  description     String?
+  estimatedWeeks  Int      @default(0)
+  expectedDuration String?
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  stages          Stage[]
+
+  @@index([path])
+}
+
+model Stage {
+  id            String   @id @default(uuid())
+  stageNumber   Int
+  title         String
+  description   String?
+  startWeek     Int
+  endWeek       Int
+  // Timestamps
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  roadmapId     String
+  roadmap       Roadmap  @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  quests        Quest[]
+
+  @@index([roadmapId, stageNumber])
+}
+
+model Quest {
+  id              String   @id @default(uuid())
+  questNumber     Int                           // ✅ ADD
+  title           String
+  description     String   @db.Text
+  week            Int
+  duration        String?                       // ✅ ADD - e.g "Week 1-2"
+  goal            String?  @db.Text            // ✅ ADD
+  keyTopics       String[]
+  // Free Resources
+  resourceDescription  String?  @db.Text       // ✅ ADD
+  courseLink           String?                 // ✅ ADD
+  videoSeriesLink      String?                 // ✅ ADD
+  documentationLink    String?                 // ✅ ADD
+  // Boss Fight
+  bossName        String?
+  bossGoal        String?  @db.Text            // ✅ ADD
+  bossChallenge   String?  @db.Text
+  bossHp          Int      @default(0)
+  bossDamage      Int      @default(0)         // ✅ ADD
+  bossDifficulty  String?                      // ✅ ADD
+  bossXpReward    Int      @default(0)         // ✅ ADD
+  bossLoot        String?                      // ✅ ADD - badge name
+  dateUnlocked    DateTime?                    // ✅ ADD
+  // Rewards
+  xpReward        Int      @default(0)
+  badgeReward     String?
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  stageId         String
+  stage           Stage       @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  resources       Resource[]
+  userQuests      UserQuest[]
+  bossQuestions   BossQuestion[]               // ✅ ADD relation
+
+  @@index([stageId, week])
+}
+
+model BossQuestion {
+  id            String       @id @default(uuid())
+  question      String       @db.Text
+  type          QuestionType @default(MULTIPLE_CHOICE)  
+  choices       String[]     // array of choices
+  answer        String[]     // correct answer(s)
+  // Timestamps
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  questId       String
+  quest         Quest        @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@index([questId])
+}
+
+model Resource {
+  id            String       @id @default(uuid())
+  title         String
+  url           String
+  type          ResourceType @default(COURSE)
+  description   String?
+  platform      String?
+  // Timestamps
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  questId       String
+  quest         Quest        @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@index([questId])
+}
+
+// ============================================
+// USER PROGRESS TRACKING
+// ============================================
+
+model UserQuest {
+  id                  String      @id @default(uuid())
+  status              QuestStatus @default(NOT_STARTED)
+  // Progress
+  startedAt           DateTime?
+  completedAt         DateTime?
+  // Boss Fight
+  bossFightAttempts   Int         @default(0)
+  bossFightPassed     Boolean     @default(false)
+  bossFightScore      Int?
+  bossFightFeedback   String?     @db.Text   // ✅ Added AI feedback
+  // XP
+  xpEarned            Int         @default(0)
+  notes               String?     @db.Text
+  // Timestamps
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  // Relations
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId             String
+  quest               Quest       @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questId])
+  @@index([userId, status])
+  @@index([completedAt])
+}
+
+// ============================================
+// SCHEDULE MANAGEMENT
+// ============================================
+
+model Schedule {
+  id            String       @id @default(uuid())
+  name          String
+  semester      String?
+  rawData       Json?
+  isParsed      Boolean      @default(false)
+  isActive      Boolean      @default(true)
+  // Timestamps
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classBlocks   ClassBlock[]
+
+  @@index([userId, isActive])
+}
+
+model ClassBlock {
+  id            String        @id @default(uuid())
+  dayOfWeek     Int
+  startTime     String
+  endTime       String
+  subject       String?
+  type          BlockType     @default(CLASS)
+  description   String?
+  // Timestamps
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  scheduleId    String
+  schedule      Schedule      @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, dayOfWeek])
+}
+
+// ============================================
+// XP STORE & PURCHASES
+// ============================================
+
+model StoreItem {
+  id            String       @id @default(uuid())
+  name          String
+  description   String       @db.Text
+  xpCost        Int
+  type          ItemType
+  details       Json?
+  isAvailable   Boolean      @default(true)
+  // Timestamps
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  purchases     Purchase[]
+  inventory     UserInventory[]
+
+  @@index([type, isAvailable])
+  @@index([xpCost])
+}
+
+model Purchase {
+  id            String       @id @default(uuid())
+  xpSpent       Int
+  quantity      Int          @default(1)
+  purchasedAt   DateTime     @default(now())
+
+  // Relations
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemId        String
+  item          StoreItem    @relation(fields: [itemId], references: [id])
+
+  @@index([userId, purchasedAt])
+  @@index([itemId])
+}
+
+model UserInventory {
+  id            String       @id @default(uuid())
+  quantity      Int          @default(1)
+  usedCount     Int          @default(0)
+  lastUsedAt    DateTime?
+  // Timestamps
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemId        String
+  item          StoreItem    @relation(fields: [itemId], references: [id])
+
+  @@unique([userId, itemId])
+  @@index([userId])
+}
+
+// ============================================
+// AI INTERACTIONS
+// ============================================
+
+model AiSession {
+  id            String        @id @default(uuid())
+  type          AiSessionType
+  topic         String
+  context       Json?
+  response      Json?
+  xpCost        Int           @default(0)
+  rating        Int?
+  feedback      String?       @db.Text
+  // Timestamps
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([createdAt])
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
 enum Path {
   NONE
   FRONTEND
@@ -71,6 +357,9 @@ enum Path {
   DATA_SCIENCE
   MOBILE
   AI_ML
+  WEB_DEV
+  DATA_ENGINEER
+  CYBERSECURITY
 }
 
 enum Badge {
@@ -80,6 +369,59 @@ enum Badge {
   ROGUE
   PALADIN
   WIZARD
+  SEMANTIC_ARCHITECT
+  RESPONSIVE_WARRIOR
+  LOGIC_INITIATE
+  DOM_DOMINATOR
+  GIT_CHRONOMANCER
 }
 
+enum QuestStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  LOCKED
+}
 
+enum ResourceType {
+  COURSE
+  VIDEO
+  DOCUMENTATION
+  INTERACTIVE
+  ARTICLE
+  TUTORIAL
+  BOOK
+}
+
+enum BlockType {
+  CLASS
+  GAP_WINDOW
+  DEAD_ZONE
+  STUDY_TIME
+  BREAK
+  OTHER
+}
+
+enum ItemType {
+  HINT
+  EXPLANATION
+  DEEP_DIVE
+  MOCK_EXAM
+  STUDY_MATERIAL
+  BOSS_RETRY
+  XP_BOOST
+}
+
+enum AiSessionType {
+  DEEP_DIVE
+  MOCK_EXAM
+  MENTOR
+  BOSS_FIGHT
+  TUTOR
+} 
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  CODING
+}
