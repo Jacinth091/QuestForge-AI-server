@@ -111,60 +111,72 @@ model Stage {
 
 model Quest {
   id              String   @id @default(uuid())
-  questNumber     Int                           // ✅ ADD
+  questNumber     Int                         
   title           String
   description     String   @db.Text
   week            Int
-  duration        String?                       // ✅ ADD - e.g "Week 1-2"
-  goal            String?  @db.Text            // ✅ ADD
+  duration        String?                      
+  goal            String?  @db.Text       
   keyTopics       String[]
   // Free Resources
-  resourceDescription  String?  @db.Text       // ✅ ADD
-  courseLink           String?                 // ✅ ADD
-  videoSeriesLink      String?                 // ✅ ADD
-  documentationLink    String?                 // ✅ ADD
-  // Boss Fight
-  bossName        String?
-  bossGoal        String?  @db.Text            // ✅ ADD
-  bossChallenge   String?  @db.Text
-  bossHp          Int      @default(0)
-  bossDamage      Int      @default(0)         // ✅ ADD
-  bossDifficulty  String?                      // ✅ ADD
-  bossXpReward    Int      @default(0)         // ✅ ADD
-  bossLoot        String?                      // ✅ ADD - badge name
-  dateUnlocked    DateTime?                    // ✅ ADD
+  resourceDescription  String?  @db.Text       
+  courseLink           String?                 
+  videoSeriesLink      String?                 
+  documentationLink    String?                 
   // Rewards
   xpReward        Int      @default(0)
   badgeReward     String?
+  dateUnlocked    DateTime?                   
   // Timestamps
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   // Relations
   stageId         String
-  stage           Stage       @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  stage           Stage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
   resources       Resource[]
   userQuests      UserQuest[]
-  bossQuestions   BossQuestion[]               // ✅ ADD relation
+  boss            Boss?        // ✅ One boss per quest
 
   @@index([stageId, week])
 }
 
+model Boss {
+  id            String   @id @default(uuid())
+  name          String
+  goal          String   @db.Text
+  challenge     String   @db.Text
+  hp            Int      @default(0)
+  damage        Int      @default(0)
+  difficulty    String?
+  xpReward      Int      @default(0)
+  loot          String?  // badge reward
+  // Timestamps
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  questId       String       @unique   // one boss per quest
+  quest         Quest        @relation(fields: [questId], references: [id], onDelete: Cascade)
+  questions     BossQuestion[]         // boss has multiple questions
+
+  @@index([questId])
+}
 model BossQuestion {
   id            String       @id @default(uuid())
   question      String       @db.Text
   type          QuestionType @default(MULTIPLE_CHOICE)  
-  choices       String[]     // array of choices
-  answer        String[]     // correct answer(s)
+  choices       String[]
+  answer        String[]
   // Timestamps
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
   // Relations
-  questId       String
-  quest         Quest        @relation(fields: [questId], references: [id], onDelete: Cascade)
+  bossId        String       // ✅ now linked to Boss not Quest
+  boss          Boss         @relation(fields: [bossId], references: [id], onDelete: Cascade)
 
-  @@index([questId])
+  @@index([bossId])
 }
 
 model Resource {
